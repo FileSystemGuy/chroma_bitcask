@@ -1,6 +1,11 @@
 //
 // Tests for the Bitcask module
 //
+// Because this project needs to read and write files, and by default all the tests run in parallel,
+// we need a unique directory for each test.  There is an attempt to force them to be single-threaded,
+// but they still run in arbitrary order, so the unique directory hack is still required.  With the hack,
+// it's possible we could drop the single-threaded configuration
+//
 #[cfg(test)]
 pub mod tests {
     use crate::Bitcask;

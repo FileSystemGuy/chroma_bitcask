@@ -13,9 +13,10 @@ pub mod bitcask {
     use std::io;
     use crc32fast;
 
-    // A simple monotonically increasing integer that identifies each datafile.  We use it as the basename of each such file.
-    // We track the higest basename we've seen and just add 1 when we need a new datafile (or corresponding hints file).
-    type BitcaskDatafileID = i32;
+    // A simple monotonically increasing integer that identifies each datafile or hintsfile.
+    // We use it as the basename of each such file.  We track the higest basename we've seen and
+    // just add 1 when we need a new datafile or corresponding hints file.
+    type BitcaskFileID = i32;
 
     //
     // Define the format of the in-memory database of keys and which data file contains their values.
@@ -23,11 +24,11 @@ pub mod bitcask {
     //
     struct BitcaskKeymapEntry {
 	value_size: i32,			// The size of the value of that key
-	fileid: BitcaskDatafileID,		// Which datafile contains that K/V pair
+	fileid: BitcaskFileID,			// Which datafile contains that K/V pair
 	offset: i64,				// The byte offset of that K/V pair within that datafile
     }
     impl BitcaskKeymapEntry {
-	pub fn new(value_size: i32, fileid: BitcaskDatafileID, offset: i64) -> Box<BitcaskKeymapEntry> {
+	pub fn new(value_size: i32, fileid: BitcaskFileID, offset: i64) -> Box<BitcaskKeymapEntry> {
 	    Box::new(BitcaskKeymapEntry {
 		value_size: value_size,
 		fileid: fileid,
@@ -74,14 +75,14 @@ pub mod bitcask {
     //
     struct BitcaskDatafile {
 	name: String,				// The relative pathname of the data file
-	ID: BitcaskDatafileID,			// What "number" is it?
+	ID: BitcaskFileID,			// What "number" is it?
 	file_lock: RwLock<File>,		// Protects the File structure to ensure seeks() go with reads()/writes()
     }
     impl BitcaskDatafile {
 	//
 	// Create a new data file.
 	//
-	pub fn new(dirpath: String, ID: BitcaskDatafileID) -> Result<Box<BitcaskDatafile>,io::Error> {
+	pub fn new(dirpath: String, ID: BitcaskFileID) -> Result<Box<BitcaskDatafile>,io::Error> {
 	    let filename = format("{}/{}.data", dirpath, ID+1);
 	    Ok(Box::new(BitcaskDatafile {
 		name: filename.clone(),
@@ -93,7 +94,7 @@ pub mod bitcask {
 	//
 	// Open an existing data file.
 	//
-	pub fn open(dirpath: String, ID: BitcaskDatafileID) -> Result<Box<BitcaskDatafile>,io::Error> {
+	pub fn open(dirpath: String, ID: BitcaskFileID) -> Result<Box<BitcaskDatafile>,io::Error> {
 	    let filename = format("{}/{}.data", dirpath, ID);
 	    Ok(Box::new(BitcaskDatafile {
 		name: filename.clone(),
@@ -157,80 +158,104 @@ pub mod bitcask {
 	    Ok(true)
 	}
     }
-    
+
     //
-    // Define the format and operations on one of the hint files used by Bitcask.
-    // This file is a very quick way to repopulate the in-memroy keymap structure.
+    // TODO: Need a full-on utility class for hints files.
+    // This class is not persistent, a hint file is either read at boot time and then forgotten,
+    // or it is generated from a data file without regard to anything else going on in the system.
     //
-    struct BitcaskHintsfileRecord {
-	key: i32,				// The key of a KV we're storing
-	op: BitcaskDatafileRectype,		// Is this a PUT or a DELETE?
-	value_size: i32,			// The size of the value for that KV
-	offset: i64,				// the offset within the data file where that KV is stored
+    struct BitcaskHintsfile {
+	name: String,				// The relative pathname of the hints file
+	ID: BitcaskFileID,			// What "number" is it?
+	file_lock: RwLock<File>,		// Protects the File structure to ensure seeks() go with reads()/writes()
     }
-    impl BitcaskHintsfileRecord {
-	pub fn new(key: i32, op: BitcaskDatafileRectype, value_size: i32, value: String, offset: i64) -> Box<BitcaskHintsfileRecord> {
-	    Box::new(BitcaskHintsfileRecord{
-		key: key,			// Copy the key into place
-		op: op,				// Copy the operation into place (PUT or DELETE)
-		value_size: value_size,		// The actual number of valid bytes in the value
-		offset: offset,			// the offset within the file of that record for that key
-	    }) 
+    impl BitcaskHintsfile {
+	//
+	// Create a new hints file.
+	//
+	pub fn new(dirpath: String, ID: BitcaskFileID) -> Result<Box<BitcaskHintsfile>,io::Error> {
+	    let filename = format("{}/{}.data", dirpath, ID+1);
+	    Ok(Box::new(BitcaskHintsfile {
+		name: filename.clone(),
+		ID: ID,
+		file: File::create(&filename)?,
+	    }))
 	}
-    }
-
-    // Generate a hint file by sumarizing all the operations in the data file by recording the *surviving* PUT and DELETE operations.
-    // Read through the datafile, recording each op (and its  key and the byte offset of the record) into an in-memory HashMap.
-    // If this is a DELETE, remove any existing PUTs for from the hint summary that key and record the DELETE in the hint summary.
-    // If this is a PUT, remove any existing DELETEs or PUTs for that key from the hint summary, record the new PUT key and byte offset.
-    // The hints file is 'datafile.name' with ".data" changesd to ".hints".
-    fn bitcask_hintsfile_generate(datafile: &BitcaskDatafile) -> Result<bool,io::Error> {
-	// We use Self::appendrec again to get the compact binary representation of the op, key, and possibly value.
-	// offset = appendrec(BitcaskDatafileRectype::PUT, key, value>)?;
-	Ok(true)
-    }
-
-    // Read all the "*.hints" files into the in-memory keymap structure.
-    // The saved_hintQ must be in sorted order so that DELETE records that follow PUT record in
-    // time will make the key go away, if they were not processed in order keys would stick 
-    // around after they were deleted.
-    fn bitcask_hintsfile_import(keymap: &HashMap<i32, BitcaskKeymapEntry>, filename: String) -> Result<bool,io::Error> {
-	Ok(true)
-    }
-
-    //
-    // This is a work routine and is lower priority than some other work, so queuing it up for later.
-    // There's very likely a much simpler way to identify this fill-in-the-missing-file task,
-    // but I don't have time to google for good library solutions right now.
-    // This would need to run during single-threaded mode either startup or shutdown processing.
-    // If I separated out the "read them in" part, then this could happen in a separate thread while
-    // normal processing was going on, but we'd need to collect the lists of files in one thread
-    // and then fork off separate thread(s?) to "generate" each hints file, and retain the list of existing
-    // hints files in the master thread so we could read them in and populate the in-memory keymap.
-    //
-    // This is the core data-resiliency routine.  It recovers from crashes and outages by
-    // depending upon the log-structure of the data files.  It generates any missing "*.hints"
-    // files so that the next crash/reboot will start faster.  Any existing, partially complete,
-    // data file becomes a read-only part of the dataset until merge time.
-    //
-    fn bitcask_hintsfile_find_missing_files(cask: &Bitcask, dirpath: &String) -> Result<bool,std::io::Error> {
+    
 	//
-	// Identify all existing "*.data" and ".*hints" files in the database directory
+	// Define the format and operations on one of the hint files used by Bitcask.
+	// This file is a very quick way to repopulate the in-memroy keymap structure.
 	//
-	let mut dataQ: VecDeque::<String> = VecDeque::<String>::new();		// Set up parallel queues
-	let mut hintQ: VecDeque::<String> = VecDeque::<String>::new();
-	for entry in read_dir(dirpath.clone())? {
-	    let entry = entry?;
-	    let filename = entry.file_name().to_string_lossy().to_string();		// The OsString type is difficult to work with
-	    if entry.metadata()?.is_file() {
-		if filename.ends_with(".data") {
-		    dataQ.push_back(filename);
-		} else if filename.ends_with(".hints") {
-		    hintQ.push_back(filename);
-		}
+	struct BitcaskHintsfileRecord {
+	    key: i32,				// The key of a KV we're storing
+	    op: BitcaskDatafileRectype,		// Is this a PUT or a DELETE?
+	    value_size: i32,			// The size of the value for that KV
+	    offset: i64,				// the offset within the data file where that KV is stored
+	}
+	impl BitcaskHintsfileRecord {
+	    pub fn new(key: i32, op: BitcaskDatafileRectype, value_size: i32, value: String, offset: i64) -> Box<BitcaskHintsfileRecord> {
+		Box::new(BitcaskHintsfileRecord{
+		    key: key,			// Copy the key into place
+		    op: op,				// Copy the operation into place (PUT or DELETE)
+		    value_size: value_size,		// The actual number of valid bytes in the value
+		    offset: offset,			// the offset within the file of that record for that key
+		}) 
 	    }
 	}
-	Ok(true)
+
+	// Generate a hint file by sumarizing all the operations in the data file by recording the *surviving* PUT and DELETE operations.
+	// Read through the datafile, recording each op (and its  key and the byte offset of the record) into an in-memory HashMap.
+	// If this is a DELETE, remove any existing PUTs for from the hint summary that key and record the DELETE in the hint summary.
+	// If this is a PUT, remove any existing DELETEs or PUTs for that key from the hint summary, record the new PUT key and byte offset.
+	// The hints file is 'datafile.name' with ".data" changesd to ".hints".
+	pub fn hintsfile_generate(datafile: &BitcaskDatafile) -> Result<bool,io::Error> {
+	    // We use Self::appendrec again to get the compact binary representation of the op, key, and possibly value.
+	    // offset = appendrec(BitcaskDatafileRectype::PUT, key, value>)?;
+	    Ok(true)
+	}
+
+	// Read all the "*.hints" files into the in-memory keymap structure.
+	// The saved_hintQ must be in sorted order so that DELETE records that follow PUT record in
+	// time will make the key go away, if they were not processed in order keys would stick 
+	// around after they were deleted.
+	pub fn hintsfile_import(keymap: &HashMap<i32, BitcaskKeymapEntry>, filename: String) -> Result<bool,io::Error> {
+	    Ok(true)
+	}
+
+	//
+	// This is a work routine and is lower priority than some other work, so queuing it up for later.
+	// There's very likely a much simpler way to identify this fill-in-the-missing-file task,
+	// but I don't have time to google for good library solutions right now.
+	// This would need to run during single-threaded mode either startup or shutdown processing.
+	// If I separated out the "read them in" part, then this could happen in a separate thread while
+	// normal processing was going on, but we'd need to collect the lists of files in one thread
+	// and then fork off separate thread(s?) to "generate" each hints file, and retain the list of existing
+	// hints files in the master thread so we could read them in and populate the in-memory keymap.
+	//
+	// This is the core data-resiliency routine.  It recovers from crashes and outages by
+	// depending upon the log-structure of the data files.  It generates any missing "*.hints"
+	// files so that the next crash/reboot will start faster.  Any existing, partially complete,
+	// data file becomes a read-only part of the dataset until merge time.
+	//
+	pub fn hintsfile_find_missing_files(cask: &Bitcask, dirpath: &String) -> Result<bool,std::io::Error> {
+	    //
+	    // Identify all existing "*.data" and ".*hints" files in the database directory
+	    //
+	    let mut dataQ: VecDeque::<String> = VecDeque::<String>::new();		// Set up parallel queues
+	    let mut hintQ: VecDeque::<String> = VecDeque::<String>::new();
+	    for entry in read_dir(dirpath.clone())? {
+		let entry = entry?;
+		let filename = entry.file_name().to_string_lossy().to_string();		// The OsString type is difficult to work with
+		if entry.metadata()?.is_file() {
+		    if filename.ends_with(".data") {
+			dataQ.push_back(filename);
+		    } else if filename.ends_with(".hints") {
+			hintQ.push_back(filename);
+		    }
+		}
+	    }
+	    Ok(true)
+	}
     }
 
     //
@@ -240,9 +265,9 @@ pub mod bitcask {
     pub struct Bitcask {
 	keymap: RwLock<HashMap<i32, BitcaskKeymapEntry>>,		// Protects the in-memory HashMap of all extant KV pairs
 	current: RwLock<BitcaskDatafile>,				// Protects changes to the 'current' field (not the datafile itself)
-	datafiles: RwLock<HashMap<BitcaskDatafileID, BitcaskDatafile>>,	// Protects all the map of the archived data files
+	datafiles: RwLock<HashMap<BitcaskFileID, BitcaskDatafile>>,	// Protects all the map of the archived data files
 	dirpath: String,						// The directory storing everything
-	maxID: BitcaskDatafileID,					// The highest ID of an existing datafile
+	maxID: BitcaskFileID,						// The highest ID of an existing datafile
     }
     impl Bitcask {
 	//
@@ -254,8 +279,8 @@ pub mod bitcask {
 	    cask.datafiles = RwLock::new(HashMap::new());
 	    cask.current = RwLock::new(BitcaskDatafile::new(dirpath, ID)?;
 	    cask.dirpath = dirpath.clone();
-	    bitcask_hintsfile_find_missing_files(&cask, dirpath)?;
-	    bitcask_hintsfile_import(keymap: &HashMap<i32, BitcaskKeymapEntry>, filename: String)?;
+	    //hintsfile_find_missing_files(&cask, dirpath)?;
+	    //hintsfile_import(keymap: &HashMap<i32, BitcaskKeymapEntry>, filename: String)?;
 	    Ok(cask)
 	}
 
